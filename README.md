@@ -1,8 +1,4 @@
-# codex-config-kit
-
-用于初始化和管理 Windows 端 Codex 通知配置的模板仓库。
-
-## 目标
+# codex-ntfy-notifier
 
 把 Codex/Codex GUI 的 Stop hook 通知通过自托管 ntfy 推送到 Android 手机：
 
