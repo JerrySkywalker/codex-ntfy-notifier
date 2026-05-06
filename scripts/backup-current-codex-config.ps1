@@ -1,10 +1,36 @@
-$CodexDir = Join-Path $env:USERPROFILE ".codex"
-$BackupRoot = "C:\Dev\backups\codex-config-kit"
-$Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$BackupDir = Join-Path $BackupRoot $Stamp
-New-Item -ItemType Directory -Force $BackupDir | Out-Null
-foreach ($name in @("notify-ntfy.ps1", "notify-ntfy.cmd", "ntfy-url.txt", "ntfy-topic.txt", "ntfy-user.txt", "ntfy-pass.dpapi", "config.toml")) {
-    $p = Join-Path $CodexDir $name
-    if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $BackupDir $name) -Force }
+param(
+    [string]$CodexDir = (Join-Path $env:USERPROFILE ".codex"),
+    [string]$BackupRoot
+)
+
+$ErrorActionPreference = "Stop"
+
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+
+if (-not $BackupRoot -or $BackupRoot.Trim() -eq "") {
+    $BackupRoot = Join-Path $RepoRoot "backups"
 }
-Write-Host "Backed up current Codex files to $BackupDir"
+
+$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$backupDir = Join-Path $BackupRoot "codex-backup-$stamp"
+
+New-Item -ItemType Directory -Force $backupDir | Out-Null
+
+$names = @(
+    "notify-ntfy.ps1",
+    "notify-ntfy.cmd",
+    "ntfy-url.txt",
+    "ntfy-topic.txt",
+    "ntfy-user.txt",
+    "ntfy-pass.dpapi",
+    "config.toml"
+)
+
+foreach ($name in $names) {
+    $src = Join-Path $CodexDir $name
+    if (Test-Path $src) {
+        Copy-Item $src (Join-Path $backupDir $name) -Force
+    }
+}
+
+Write-Host "Backup created: $backupDir"
