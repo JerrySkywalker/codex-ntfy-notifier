@@ -1,0 +1,6 @@
+# Merge this snippet into %USERPROFILE%\.codex\config.toml manually.
+# Keep this repo as templates only; do not store personal tokens or passwords here.
+#
+# NOTE: Codex hook schema may change. Keep your current working hook config as source of truth.
+# Example intent:
+# on Stop event, call: %USERPROFILE%\.codex\notify-ntfy.cmd

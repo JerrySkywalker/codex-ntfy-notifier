@@ -1,0 +1,33 @@
+# Runtime / secrets
+*.dpapi
+*.secret
+*.key
+*.pem
+.env
+credentials.*
+ntfy-url.txt
+ntfy-topic.txt
+ntfy-user.txt
+ntfy-pass.dpapi
+notify-ntfy.log
+
+# Backups / generated
+backup*/
+*.bak
+*.tmp
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Private notes
+private/
+notes-private/
+
+# Runtime Codex directory
+.codex/
+
+# Local settings
+*.local.*
