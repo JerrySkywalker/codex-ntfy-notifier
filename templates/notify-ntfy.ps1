@@ -3,7 +3,7 @@ param(
     [string[]]$NotifyArgs
 )
 
-$ErrorActionPreference = "SilentlyContinue"
+$ErrorActionPreference = "Stop"
 
 try {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -13,39 +13,79 @@ try {
 } catch {
 }
 
-$ConfigDir = Join-Path $env:USERPROFILE ".codex"
-$ServerPath = Join-Path $ConfigDir "ntfy-url.txt"
-$TopicPath  = Join-Path $ConfigDir "ntfy-topic.txt"
-$UserPath   = Join-Path $ConfigDir "ntfy-user.txt"
+$CodexDir = Join-Path $env:USERPROFILE ".codex"
+$LogPath = Join-Path $CodexDir "notify-ntfy.log"
+$DpapiPath = Join-Path $CodexDir "ntfy-pass.dpapi"
 
-function Get-ConfigText {
-    param([string]$Path)
+function Write-NotifyLog {
+    param([string]$Text)
 
     try {
-        if (Test-Path -LiteralPath $Path) {
-            return (Get-Content -LiteralPath $Path -Raw -Encoding UTF8).Trim()
-        }
+        New-Item -ItemType Directory -Force $CodexDir | Out-Null
+        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
+        Add-Content -Path $LogPath -Value "[$ts] $Text" -Encoding UTF8
     } catch {
+    }
+}
+
+function Read-ConfigText {
+    param(
+        [string]$Name,
+        [string]$EnvName
+    )
+
+    $envValue = [Environment]::GetEnvironmentVariable($EnvName)
+    if (-not [string]::IsNullOrWhiteSpace($envValue)) {
+        return $envValue.Trim()
+    }
+
+    $path = Join-Path $CodexDir $Name
+    if (Test-Path $path) {
+        return ((Get-Content $path -Raw -Encoding UTF8).Trim())
     }
 
     return ""
 }
 
-$Server = Get-ConfigText $ServerPath
-$Topic  = Get-ConfigText $TopicPath
-$User   = Get-ConfigText $UserPath
-
-$ChunkSize = 3200
-$LogPath = Join-Path $env:USERPROFILE ".codex\notify-ntfy.log"
-$DpapiPath = Join-Path $env:USERPROFILE ".codex\ntfy-pass.dpapi"
-
-function Write-NotifyLog {
-    param([string]$Text)
-    try {
-        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
-        Add-Content -Path $LogPath -Value "[$ts] $Text" -Encoding UTF8
-    } catch {
+function Get-Password {
+    $envPass = [Environment]::GetEnvironmentVariable("NTFY_CODEX_PASS")
+    if (-not [string]::IsNullOrWhiteSpace($envPass)) {
+        return $envPass
     }
+
+    if (-not (Test-Path $DpapiPath)) {
+        return ""
+    }
+
+    try {
+        $secure = Get-Content $DpapiPath -Raw | ConvertTo-SecureString
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+
+        try {
+            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
+        } finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+        }
+    } catch {
+        Write-NotifyLog "DPAPI password read failed: $($_.Exception.Message)"
+        return ""
+    }
+}
+
+function Get-RawPayload {
+    if ($null -ne $NotifyArgs -and $NotifyArgs.Count -gt 0) {
+        return ($NotifyArgs -join " ")
+    }
+
+    try {
+        if ([Console]::IsInputRedirected) {
+            return [Console]::In.ReadToEnd()
+        }
+    } catch {
+        Write-NotifyLog "Read stdin failed: $($_.Exception.Message)"
+    }
+
+    return ""
 }
 
 function Normalize-DisplayPath {
@@ -62,73 +102,6 @@ function Normalize-DisplayPath {
     return $p
 }
 
-function Get-Password {
-    $pass = $env:NTFY_CODEX_PASS
-
-    if (-not [string]::IsNullOrWhiteSpace($pass)) {
-        return $pass
-    }
-
-    if (Test-Path $DpapiPath) {
-        try {
-            $secure = Get-Content $DpapiPath -Raw | ConvertTo-SecureString
-            $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-            try {
-                return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-            } finally {
-                [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-            }
-        } catch {
-            Write-NotifyLog "DPAPI password read failed: $($_.Exception.Message)"
-        }
-    }
-
-    return ""
-}
-
-function Get-RawPayload {
-    if ($null -ne $NotifyArgs) {
-        if ($NotifyArgs.Count -gt 0) {
-            return ($NotifyArgs -join " ")
-        }
-    }
-
-    try {
-        if ([Console]::IsInputRedirected) {
-            return [Console]::In.ReadToEnd()
-        }
-    } catch {
-        Write-NotifyLog "Read stdin failed: $($_.Exception.Message)"
-    }
-
-    return ""
-}
-
-function Get-JsonFieldLoose {
-    param(
-        [string]$Raw,
-        [string]$Name
-    )
-
-    if ([string]::IsNullOrWhiteSpace($Raw)) {
-        return ""
-    }
-
-    $pattern = '"' + [regex]::Escape($Name) + '"\s*:\s*"((?:\\.|[^"\\])*)"?'
-    $m = [regex]::Match($Raw, $pattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-
-    if ($m.Success) {
-        $v = $m.Groups[1].Value
-        try {
-            return [regex]::Unescape($v)
-        } catch {
-            return $v
-        }
-    }
-
-    return ""
-}
-
 function Get-Prop {
     param(
         $Obj,
@@ -140,7 +113,6 @@ function Get-Prop {
     }
 
     $p = $Obj.PSObject.Properties[$Name]
-
     if ($null -ne $p) {
         return $p.Value
     }
@@ -192,20 +164,20 @@ function Extract-AssistantTextFromObject {
         return ""
     }
 
-    $last = Get-Prop $Obj "last_assistant_message"
-    if (-not [string]::IsNullOrWhiteSpace($last)) {
-        return [string]$last
+    foreach ($name in @("last_assistant_message", "last-assistant-message", "lastAssistantMessage")) {
+        $v = Get-Prop $Obj $name
+        if (-not [string]::IsNullOrWhiteSpace($v)) {
+            return [string]$v
+        }
     }
 
     $role = [string](Get-Prop $Obj "role")
     $type = [string](Get-Prop $Obj "type")
 
     $isAssistant = $false
-
     if ($role -eq "assistant") {
         $isAssistant = $true
     }
-
     if ($type -match "assistant|agent_message|message_output|output_text") {
         $isAssistant = $true
     }
@@ -222,27 +194,10 @@ function Extract-AssistantTextFromObject {
         }
     }
 
-    $payload = Get-Prop $Obj "payload"
-    if ($null -ne $payload) {
-        $t = Extract-AssistantTextFromObject $payload
-        if (-not [string]::IsNullOrWhiteSpace($t)) {
-            return $t
-        }
-    }
-
-    $item = Get-Prop $Obj "item"
-    if ($null -ne $item) {
-        $t = Extract-AssistantTextFromObject $item
-        if (-not [string]::IsNullOrWhiteSpace($t)) {
-            return $t
-        }
-    }
-
-    $response = Get-Prop $Obj "response"
-    if ($null -ne $response) {
-        $output = Get-Prop $response "output"
-        if ($null -ne $output) {
-            $t = Convert-ContentToText $output
+    foreach ($name in @("payload", "item", "response")) {
+        $pv = Get-Prop $Obj $name
+        if ($null -ne $pv) {
+            $t = Extract-AssistantTextFromObject $pv
             if (-not [string]::IsNullOrWhiteSpace($t)) {
                 return $t
             }
@@ -259,54 +214,46 @@ function Get-LastAssistantTextFromTranscript {
         return ""
     }
 
-    $candidatePaths = @()
-    $candidatePaths += $TranscriptPath
+    $paths = @()
+    $paths += $TranscriptPath
 
-    $normalPath = Normalize-DisplayPath $TranscriptPath
-    if (-not [string]::IsNullOrWhiteSpace($normalPath)) {
-        $candidatePaths += $normalPath
+    $normalized = Normalize-DisplayPath $TranscriptPath
+    if (-not [string]::IsNullOrWhiteSpace($normalized)) {
+        $paths += $normalized
     }
 
-    foreach ($p in $candidatePaths) {
+    foreach ($p in $paths) {
         try {
             if (-not (Test-Path -LiteralPath $p)) {
                 continue
             }
 
-            $lines = @()
-
-            try {
-                $lines = @(Get-Content -LiteralPath $p -Tail 800 -Encoding UTF8)
-            } catch {
-                $lines = @(Get-Content -LiteralPath $p -Tail 800)
-            }
+            $lines = Get-Content -LiteralPath $p -Tail 500 -Encoding UTF8
 
             for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-                $line = $lines[$i]
-
+                $line = [string]$lines[$i]
                 if ([string]::IsNullOrWhiteSpace($line)) {
                     continue
                 }
 
                 try {
                     $obj = $line | ConvertFrom-Json -ErrorAction Stop
-                    $t = Extract-AssistantTextFromObject $obj
-
-                    if (-not [string]::IsNullOrWhiteSpace($t)) {
-                        return $t.Trim()
+                    $text = Extract-AssistantTextFromObject $obj
+                    if (-not [string]::IsNullOrWhiteSpace($text)) {
+                        return $text
                     }
                 } catch {
                 }
             }
         } catch {
-            Write-NotifyLog "Transcript parse failed: $($_.Exception.Message)"
+            Write-NotifyLog "Transcript read failed: $p :: $($_.Exception.Message)"
         }
     }
 
     return ""
 }
 
-function Send-NtfySingle {
+function Send-Ntfy {
     param(
         [string]$Title,
         [string]$Message,
@@ -314,186 +261,157 @@ function Send-NtfySingle {
         [string]$Tags = "robot"
     )
 
-    $pass = Get-Password
+    $server = Read-ConfigText -Name "ntfy-url.txt" -EnvName "NTFY_CODEX_URL"
+    $topic = Read-ConfigText -Name "ntfy-topic.txt" -EnvName "NTFY_CODEX_TOPIC"
+    $user = Read-ConfigText -Name "ntfy-user.txt" -EnvName "NTFY_CODEX_USER"
+    $password = Get-Password
 
-    if ([string]::IsNullOrWhiteSpace($pass)) {
-        Write-NotifyLog "Exit: password is empty"
-        return
+    if ([string]::IsNullOrWhiteSpace($server)) {
+        throw "ntfy server URL is empty."
     }
 
-    $Pair  = "${User}:${pass}"
-    $Basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Pair))
-    $BodyBytes = [Text.Encoding]::UTF8.GetBytes($Message)
-
-    try {
-        Invoke-RestMethod `
-          -Method Post `
-          -Uri "$Server/$Topic" `
-          -Headers @{
-            Authorization = "Basic $Basic"
-            Title         = $Title
-            Priority      = $Priority
-            Tags          = $Tags
-          } `
-          -ContentType "text/plain; charset=utf-8" `
-          -Body $BodyBytes | Out-Null
-
-        Write-NotifyLog "ntfy send success. Title=$Title"
-    } catch {
-        Write-NotifyLog "ntfy send failed: $($_.Exception.Message)"
+    if ([string]::IsNullOrWhiteSpace($topic)) {
+        throw "ntfy topic is empty."
     }
+
+    if ([string]::IsNullOrWhiteSpace($user)) {
+        throw "ntfy username is empty."
+    }
+
+    if ([string]::IsNullOrWhiteSpace($password)) {
+        throw "ntfy password is empty."
+    }
+
+    $server = $server.TrimEnd("/")
+    $uri = "$server/$topic"
+
+    $basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${user}:${password}"))
+
+    $headers = @{
+        Authorization = "Basic $basic"
+        Title = $Title
+        Priority = $Priority
+        Tags = $Tags
+    }
+
+    Invoke-RestMethod `
+        -Method Post `
+        -Uri $uri `
+        -Headers $headers `
+        -Body $Message `
+        -ContentType "text/plain; charset=utf-8" | Out-Null
 }
-
-function Send-NtfyLong {
-    param(
-        [string]$Title,
-        [string]$Message,
-        [string]$Priority = "4",
-        [string]$Tags = "robot"
-    )
-
-    if ([string]::IsNullOrEmpty($Message)) {
-        Send-NtfySingle -Title $Title -Message "" -Priority $Priority -Tags $Tags
-        return
-    }
-
-    if ($Message.Length -le $ChunkSize) {
-        Send-NtfySingle -Title $Title -Message $Message -Priority $Priority -Tags $Tags
-        return
-    }
-
-    $total = [Math]::Ceiling($Message.Length / $ChunkSize)
-
-    for ($i = 0; $i -lt $total; $i++) {
-        $start = $i * $ChunkSize
-        $len = [Math]::Min($ChunkSize, $Message.Length - $start)
-        $chunk = $Message.Substring($start, $len)
-        $chunkTitle = "$Title [$($i + 1)/$total]"
-
-        Send-NtfySingle `
-          -Title $chunkTitle `
-          -Message $chunk `
-          -Priority $Priority `
-          -Tags $Tags
-    }
-}
-
-Write-NotifyLog "==== notify script invoked ===="
-
-if ([string]::IsNullOrWhiteSpace($Server) -or [string]::IsNullOrWhiteSpace($Topic) -or [string]::IsNullOrWhiteSpace($User)) {
-    Write-NotifyLog "Exit: ntfy url/topic/user config missing"
-    exit 0
-}
-
-$raw = Get-RawPayload
-Write-NotifyLog "RawLength=$($raw.Length)"
-Write-NotifyLog "RawPreview=$($raw.Substring(0, [Math]::Min($raw.Length, 500)))"
-
-if ([string]::IsNullOrWhiteSpace($raw)) {
-    Send-NtfySingle -Title "Codex hook fired" -Message "Codex hook fired, but payload was empty."
-    exit 0
-}
-
-$json = $null
-$jsonOk = $false
 
 try {
-    $json = $raw | ConvertFrom-Json -ErrorAction Stop
-    $jsonOk = $true
-    Write-NotifyLog "JSON parse success"
+    Write-NotifyLog "==== notify script invoked ===="
+
+    $raw = Get-RawPayload
+    Write-NotifyLog "RawLength=$($raw.Length)"
+
+    $json = $null
+
+    if (-not [string]::IsNullOrWhiteSpace($raw)) {
+        try {
+            $json = $raw | ConvertFrom-Json -ErrorAction Stop
+            Write-NotifyLog "JSON parse success"
+        } catch {
+            Write-NotifyLog "JSON parse failed: $($_.Exception.Message)"
+        }
+    }
+
+    $event = ""
+    $cwd = ""
+    $model = ""
+    $transcript = ""
+    $hookLast = ""
+
+    if ($null -ne $json) {
+        foreach ($name in @("hook_event_name", "type")) {
+            $v = Get-Prop $json $name
+            if (-not [string]::IsNullOrWhiteSpace($v)) {
+                $event = [string]$v
+                break
+            }
+        }
+
+        $cwd = [string](Get-Prop $json "cwd")
+        $model = [string](Get-Prop $json "model")
+        $transcript = [string](Get-Prop $json "transcript_path")
+
+        foreach ($name in @("last_assistant_message", "last-assistant-message", "message", "text")) {
+            $v = Get-Prop $json $name
+            if (-not [string]::IsNullOrWhiteSpace($v)) {
+                $hookLast = [string]$v
+                break
+            }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($event)) {
+        $event = "notification"
+    }
+
+    Write-NotifyLog "Event=$event"
+    Write-NotifyLog "Cwd=$cwd"
+    Write-NotifyLog "Model=$model"
+    Write-NotifyLog "Transcript=$transcript"
+
+    $isStopLike = $false
+    if ($event -match "Stop|manual-test|stdin-test|arg-test|notification") {
+        $isStopLike = $true
+    }
+
+    if (-not $isStopLike) {
+        Write-NotifyLog "Ignored event: $event"
+        exit 0
+    }
+
+    $assistantText = Get-LastAssistantTextFromTranscript $transcript
+
+    if ([string]::IsNullOrWhiteSpace($assistantText)) {
+        $assistantText = $hookLast
+    }
+
+    if ([string]::IsNullOrWhiteSpace($assistantText)) {
+        if (-not [string]::IsNullOrWhiteSpace($raw)) {
+            $assistantText = $raw
+        } else {
+            $assistantText = "Codex notify script was invoked."
+        }
+    }
+
+    $transcriptDisplay = Normalize-DisplayPath $transcript
+    $timeText = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+
+    $parts = @()
+    $parts += "Status: Codex task finished"
+    $parts += "Time: $timeText"
+
+    if (-not [string]::IsNullOrWhiteSpace($cwd)) {
+        $parts += "Directory: $cwd"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($model)) {
+        $parts += "Model: $model"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($transcriptDisplay)) {
+        $parts += "Transcript: $transcriptDisplay"
+    }
+
+    $parts += ""
+    $parts += "==== Codex Output ===="
+    $parts += $assistantText
+
+    $message = ($parts -join "`n")
+    $title = "Codex done $((Get-Date).ToString('HH:mm:ss'))"
+
+    Send-Ntfy -Title $title -Message $message -Priority "4" -Tags "robot"
+
+    Write-NotifyLog "ntfy send success. Title=$title"
+    exit 0
 } catch {
-    Write-NotifyLog "JSON parse failed: $($_.Exception.Message)"
+    Write-NotifyLog "Exit with error: $($_.Exception.Message)"
+    Write-Error $_.Exception.Message
+    exit 1
 }
-
-$event = ""
-$cwd = ""
-$model = ""
-$transcript = ""
-$hookLast = ""
-
-if ($jsonOk) {
-    if ($json.PSObject.Properties["hook_event_name"]) {
-        $event = [string]$json.PSObject.Properties["hook_event_name"].Value
-    }
-    if ($json.PSObject.Properties["cwd"]) {
-        $cwd = [string]$json.PSObject.Properties["cwd"].Value
-    }
-    if ($json.PSObject.Properties["model"]) {
-        $model = [string]$json.PSObject.Properties["model"].Value
-    }
-    if ($json.PSObject.Properties["transcript_path"]) {
-        $transcript = [string]$json.PSObject.Properties["transcript_path"].Value
-    }
-    if ($json.PSObject.Properties["last_assistant_message"]) {
-        $hookLast = [string]$json.PSObject.Properties["last_assistant_message"].Value
-    }
-} else {
-    $event = Get-JsonFieldLoose -Raw $raw -Name "hook_event_name"
-    $cwd = Get-JsonFieldLoose -Raw $raw -Name "cwd"
-    $model = Get-JsonFieldLoose -Raw $raw -Name "model"
-    $transcript = Get-JsonFieldLoose -Raw $raw -Name "transcript_path"
-    $hookLast = Get-JsonFieldLoose -Raw $raw -Name "last_assistant_message"
-}
-
-$transcriptDisplay = Normalize-DisplayPath $transcript
-
-Write-NotifyLog "Event=$event"
-Write-NotifyLog "Cwd=$cwd"
-Write-NotifyLog "Model=$model"
-Write-NotifyLog "TranscriptDisplay=$transcriptDisplay"
-
-if ($event -ne "Stop") {
-    Write-NotifyLog "Ignored event: $event"
-    exit 0
-}
-
-# 忽略内部标题生成等辅助 Stop
-if ([string]::IsNullOrWhiteSpace($transcript) -and $model -match "mini") {
-    Write-NotifyLog "Ignored auxiliary stop event: model=$model transcript is empty"
-    exit 0
-}
-
-# 优先从 transcript 读取最后一条 assistant 输出，避免 hook payload 中文乱码
-$assistantText = Get-LastAssistantTextFromTranscript $transcript
-
-# 如果 transcript 读不到，再用 hook payload 里的 last_assistant_message
-if ([string]::IsNullOrWhiteSpace($assistantText)) {
-    $assistantText = $hookLast
-}
-
-if ([string]::IsNullOrWhiteSpace($assistantText)) {
-    $assistantText = "未能提取 Codex 输出。请回到 PC 端查看结果。"
-}
-
-$timeText = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-
-$parts = @()
-$parts += "状态: Codex 任务已完成"
-$parts += "时间: $timeText"
-
-if (-not [string]::IsNullOrWhiteSpace($cwd)) {
-    $parts += "目录: $cwd"
-}
-
-if (-not [string]::IsNullOrWhiteSpace($model)) {
-    $parts += "模型: $model"
-}
-
-if (-not [string]::IsNullOrWhiteSpace($transcriptDisplay)) {
-    $parts += "记录: $transcriptDisplay"
-}
-
-$parts += ""
-$parts += "==== Codex 输出 ===="
-$parts += $assistantText
-
-$msg = ($parts -join "`n")
-$title = "Codex done $((Get-Date).ToString('HH:mm:ss'))"
-
-Send-NtfyLong `
-  -Title $title `
-  -Message $msg `
-  -Priority "4" `
-  -Tags "robot"
-
-exit 0

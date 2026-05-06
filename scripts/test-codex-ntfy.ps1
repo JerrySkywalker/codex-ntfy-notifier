@@ -20,4 +20,8 @@ $payload = @{
 
 $payload | powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath
 
-Write-Host "Test payload sent via $scriptPath"
+if ($LASTEXITCODE -ne 0) {
+    throw "notify script failed with exit code $LASTEXITCODE"
+}
+
+Write-Host "Test payload sent successfully via $scriptPath"
