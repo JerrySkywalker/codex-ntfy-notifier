@@ -18,7 +18,7 @@ Codex hook -> %USERPROFILE%\.codex\notify-ntfy.cmd
 推荐把本仓库放在：
 
 ```text
-V:\src\codex-config-kit
+codex-ntfy-notifier
 ```
 
 实际运行文件由安装脚本生成到：
@@ -36,7 +36,7 @@ V:\src\codex-config-kit
 ## 初始化
 
 ```powershell
-cd V:\src\codex-config-kit
+cd codex-ntfy-notifier
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\install-codex-ntfy.ps1
 ```
 
@@ -66,7 +66,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\backup-current-codex-conf
 备份目录：
 
 ```text
-C:\Dev\backups\codex-config-kit\<timestamp>
+.\backups\codex-backup-<timestamp>
 ```
 
 ## 仓库原则
@@ -92,4 +92,5 @@ C:\Dev\backups\codex-config-kit\<timestamp>
 2. 提交 Git。
 3. 运行 `scripts/install-codex-ntfy.ps1` 重新安装到 `%USERPROFILE%\.codex`。
 4. 运行 `scripts/test-codex-ntfy.ps1` 测试。
+
 
