@@ -292,6 +292,7 @@ function Send-Ntfy {
         Title = $Title
         Priority = $Priority
         Tags = $Tags
+        Markdown = "yes"
     }
 
     Invoke-RestMethod `
@@ -299,7 +300,7 @@ function Send-Ntfy {
         -Uri $uri `
         -Headers $headers `
         -Body $Message `
-        -ContentType "text/plain; charset=utf-8" | Out-Null
+        -ContentType "text/markdown; charset=utf-8" | Out-Null
 }
 
 try {
@@ -384,24 +385,33 @@ try {
     $timeText = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
 
     $parts = @()
-    $parts += "Status: Codex task finished"
-    $parts += "Time: $timeText"
+    $parts += "## Codex task finished"
+    $parts += ""
+    $parts += "- **Time:** ``$timeText``"
 
     if (-not [string]::IsNullOrWhiteSpace($cwd)) {
-        $parts += "Directory: $cwd"
+        $parts += "- **Directory:** ``$cwd``"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($model)) {
-        $parts += "Model: $model"
+        $parts += "- **Model:** ``$model``"
     }
 
     if (-not [string]::IsNullOrWhiteSpace($transcriptDisplay)) {
-        $parts += "Transcript: $transcriptDisplay"
+        $parts += "- **Transcript:** ``$transcriptDisplay``"
     }
 
     $parts += ""
-    $parts += "==== Codex Output ===="
-    $parts += $assistantText
+    $parts += "---"
+    $parts += ""
+    $parts += "### Codex output"
+    $parts += ""
+
+    if (-not [string]::IsNullOrWhiteSpace($assistantText)) {
+        $parts += $assistantText.Trim()
+    } else {
+        $parts += "_No assistant output captured._"
+    }
 
     $message = ($parts -join "`n")
     $title = "Codex done $((Get-Date).ToString('HH:mm:ss'))"

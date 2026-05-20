@@ -15,7 +15,17 @@ $payload = @{
     type = "manual-test"
     cwd = (Get-Location).Path
     model = "manual"
-    last_assistant_message = "Codex ntfy notification test succeeded."
+    last_assistant_message = @'
+## Markdown test succeeded
+
+- **Bold text**
+- `Inline code`
+- Link: [ntfy publishing docs](https://docs.ntfy.sh/publish/)
+
+```text
+hello from codex-ntfy-notifier
+```
+'@
 } | ConvertTo-Json -Compress
 
 $payload | powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath
