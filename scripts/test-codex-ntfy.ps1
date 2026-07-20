@@ -28,7 +28,7 @@ hello from codex-ntfy-notifier
 '@
 } | ConvertTo-Json -Compress
 
-$payload | powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath
+$payload | powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath -CodexDir $CodexDir
 
 if ($LASTEXITCODE -ne 0) {
     throw "notify script failed with exit code $LASTEXITCODE"

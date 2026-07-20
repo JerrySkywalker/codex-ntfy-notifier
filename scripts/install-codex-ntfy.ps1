@@ -29,7 +29,7 @@ if (-not $User -or $User.Trim() -eq "") {
 }
 
 if (-not $BackupRoot -or $BackupRoot.Trim() -eq "") {
-    $BackupRoot = Join-Path $RepoRoot "backups"
+    $BackupRoot = Join-Path $CodexDir "backups"
 }
 
 New-Item -ItemType Directory -Force $CodexDir | Out-Null
@@ -54,7 +54,8 @@ Write-Host ""
 Write-Host "Installed Codex ntfy notification files to: $CodexDir"
 Write-Host ""
 Write-Host "Next step:"
-Write-Host "  Add the hook snippet from templates/codex-config-snippet.toml to your Codex config if needed."
+Write-Host "  Add the user-level notify snippet from templates/codex-config-snippet.toml to your Codex config."
+Write-Host "  Replace both example paths with: $CodexDir"
 Write-Host ""
 Write-Host "Then test:"
 Write-Host "  powershell.exe -ExecutionPolicy Bypass -File .\scripts\test-codex-ntfy.ps1"

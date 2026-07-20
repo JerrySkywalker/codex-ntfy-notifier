@@ -1,6 +1,17 @@
-# Merge this snippet into %USERPROFILE%\.codex\config.toml manually.
-# Keep this repo as templates only; do not store personal tokens or passwords here.
+# Add this to your user-level %USERPROFILE%\.codex\config.toml after install.
+# Do not put it in a project .codex/config.toml: Codex ignores user-level
+# notification settings there. Replace the example path with the literal path
+# selected by the installer. TOML literal strings keep Windows backslashes intact.
 #
-# NOTE: Codex hook schema may change. Keep your current working hook config as source of truth.
-# Example intent:
-# on Stop event, call: %USERPROFILE%\.codex\notify-ntfy.cmd
+# Codex invokes this program for agent-turn-complete and passes one JSON argument.
+# The notifier wrapper also forwards manual arguments for local troubleshooting.
+notify = [
+  'powershell.exe',
+  '-NoProfile',
+  '-ExecutionPolicy',
+  'Bypass',
+  '-File',
+  'C:\Users\YOUR_USER\.codex\notify-ntfy.ps1',
+  '-CodexDir',
+  'C:\Users\YOUR_USER\.codex',
+]
