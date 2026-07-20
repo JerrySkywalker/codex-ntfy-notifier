@@ -1,6 +1,7 @@
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$NotifyArgs
+    [string[]]$NotifyArgs,
+    [string]$CodexDir
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +14,9 @@ try {
 } catch {
 }
 
-$CodexDir = Join-Path $env:USERPROFILE ".codex"
+if ([string]::IsNullOrWhiteSpace($CodexDir)) {
+    $CodexDir = Join-Path $env:USERPROFILE ".codex"
+}
 $LogPath = Join-Path $CodexDir "notify-ntfy.log"
 $DpapiPath = Join-Path $CodexDir "ntfy-pass.dpapi"
 
@@ -288,7 +291,7 @@ function Send-Ntfy {
         throw "ntfy server URL is invalid."
     }
 
-    $allowInsecureLoopback = $serverUri.IsLoopback -and $env:NTFY_CODEX_ALLOW_INSECURE_LOOPBACK -eq "1"
+    $allowInsecureLoopback = $serverUri.Scheme -eq [Uri]::UriSchemeHttp -and $serverUri.IsLoopback -and $env:NTFY_CODEX_ALLOW_INSECURE_LOOPBACK -eq "1"
     if ($serverUri.Scheme -ne [Uri]::UriSchemeHttps -and -not $allowInsecureLoopback) {
         throw "ntfy server URL must use HTTPS."
     }
@@ -359,19 +362,12 @@ try {
         }
     }
 
-    if ([string]::IsNullOrWhiteSpace($event)) {
-        $event = "notification"
-    }
-
     Write-NotifyLog "Event=$event"
     Write-NotifyLog "Cwd=$cwd"
     Write-NotifyLog "Model=$model"
     Write-NotifyLog "Transcript=$transcript"
 
-    $isStopLike = $false
-    if ($event -match "Stop|agent-turn-complete|manual-test|stdin-test|arg-test|notification") {
-        $isStopLike = $true
-    }
+    $isStopLike = $event -in @("Stop", "agent-turn-complete", "manual-test", "stdin-test", "arg-test", "notification")
 
     if (-not $isStopLike) {
         Write-NotifyLog "Ignored event: $event"

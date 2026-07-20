@@ -120,7 +120,7 @@ function Update-CodexFeatureFlags {
 
     $featuresEnd = $lines.Count
     for ($j = $featuresStart + 1; $j -lt $lines.Count; $j++) {
-        if ($lines[$j] -match '^\s*\[[^\]]+\]\s*(#.*)?$') {
+        if ($lines[$j] -match '^\s*\[\[?[^\]]+\]\]?\s*(#.*)?$') {
             $featuresEnd = $j
             break
         }

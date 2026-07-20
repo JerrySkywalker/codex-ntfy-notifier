@@ -12,4 +12,6 @@ notify = [
   'Bypass',
   '-File',
   'C:\Users\YOUR_USER\.codex\notify-ntfy.ps1',
+  '-CodexDir',
+  'C:\Users\YOUR_USER\.codex',
 ]
