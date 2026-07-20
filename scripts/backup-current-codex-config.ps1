@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
 if (-not $BackupRoot -or $BackupRoot.Trim() -eq "") {
-    $BackupRoot = Join-Path $RepoRoot "backups"
+    $BackupRoot = Join-Path $CodexDir "backups"
 }
 
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"

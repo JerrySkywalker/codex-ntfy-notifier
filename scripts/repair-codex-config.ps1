@@ -3,21 +3,26 @@ param(
     [string]$ConfigPath,
     [string]$BackupRoot,
     [switch]$NoBackup,
-    [switch]$EnableApps
+    [switch]$EnableApps,
+    [switch]$DisableApps
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 
-if (-not $BackupRoot -or $BackupRoot.Trim() -eq "") {
-    $BackupRoot = Join-Path $RepoRoot "backups"
+if ($EnableApps -and $DisableApps) {
+    throw "EnableApps and DisableApps cannot be used together."
 }
 
 if (-not $ConfigPath -or $ConfigPath.Trim() -eq "") {
     $ConfigPath = Join-Path $CodexDir "config.toml"
 } else {
     $CodexDir = Split-Path -Parent $ConfigPath
+}
+
+if (-not $BackupRoot -or $BackupRoot.Trim() -eq "") {
+    $BackupRoot = Join-Path $CodexDir "backups"
 }
 
 function Write-Utf8NoBom {
@@ -43,7 +48,7 @@ function Read-ConfigText {
 function Update-CodexFeatureFlags {
     param(
         [string]$Text,
-        [bool]$AppsEnabled
+        [object]$AppsEnabled
     )
 
     $lines = @()
@@ -51,12 +56,33 @@ function Update-CodexFeatureFlags {
         $lines = @($Text -split "`r?`n")
     }
 
-    # Remove deprecated alias anywhere in config. The canonical key is [features].hooks.
-    $withoutDeprecated = New-Object System.Collections.Generic.List[string]
-    foreach ($line in $lines) {
-        if ($line -notmatch '^\s*codex_hooks\s*=') {
-            [void]$withoutDeprecated.Add($line)
+    # Remove the deprecated alias only from [features]; other tables may use the same key.
+    $featuresStartBefore = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*\[features\]\s*(#.*)?$') {
+            $featuresStartBefore = $i
+            break
         }
+    }
+
+    $featuresEndBefore = $lines.Count
+    if ($featuresStartBefore -ge 0) {
+        for ($j = $featuresStartBefore + 1; $j -lt $lines.Count; $j++) {
+            if ($lines[$j] -match '^\s*\[\[?[^\]]+\]\]?\s*(#.*)?$') {
+                $featuresEndBefore = $j
+                break
+            }
+        }
+    }
+
+    $withoutDeprecated = New-Object System.Collections.Generic.List[string]
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        $insideFeatures = $featuresStartBefore -ge 0 -and $i -gt $featuresStartBefore -and $i -lt $featuresEndBefore
+        if ($insideFeatures -and $line -match '^\s*codex_hooks\s*=') {
+            continue
+        }
+        [void]$withoutDeprecated.Add($line)
     }
     $lines = @($withoutDeprecated.ToArray())
 
@@ -68,7 +94,10 @@ function Update-CodexFeatureFlags {
         }
     }
 
-    $appsValue = if ($AppsEnabled) { "true" } else { "false" }
+    $appsValue = $null
+    if ($null -ne $AppsEnabled) {
+        $appsValue = if ([bool]$AppsEnabled) { "true" } else { "false" }
+    }
 
     if ($featuresStart -lt 0) {
         $out = New-Object System.Collections.Generic.List[string]
@@ -82,7 +111,9 @@ function Update-CodexFeatureFlags {
 
         [void]$out.Add("[features]")
         [void]$out.Add("hooks = true")
-        [void]$out.Add("apps = $appsValue")
+        if ($null -ne $appsValue) {
+            [void]$out.Add("apps = $appsValue")
+        }
 
         return (($out.ToArray()) -join "`n").TrimEnd() + "`n"
     }
@@ -102,11 +133,16 @@ function Update-CodexFeatureFlags {
     }
 
     [void]$out2.Add("hooks = true")
-    [void]$out2.Add("apps = $appsValue")
+    if ($null -ne $appsValue) {
+        [void]$out2.Add("apps = $appsValue")
+    }
 
     for ($i = $featuresStart + 1; $i -lt $featuresEnd; $i++) {
         $line = $lines[$i]
-        if ($line -match '^\s*(hooks|apps)\s*=') {
+        if ($line -match '^\s*hooks\s*=') {
+            continue
+        }
+        if ($null -ne $appsValue -and $line -match '^\s*apps\s*=') {
             continue
         }
         [void]$out2.Add($line)
@@ -134,10 +170,20 @@ if (-not $NoBackup) {
 }
 
 $current = Read-ConfigText -Path $ConfigPath
-$updated = Update-CodexFeatureFlags -Text $current -AppsEnabled ([bool]$EnableApps)
+$appsSetting = $null
+if ($EnableApps) {
+    $appsSetting = $true
+} elseif ($DisableApps) {
+    $appsSetting = $false
+}
+$updated = Update-CodexFeatureFlags -Text $current -AppsEnabled $appsSetting
 Write-Utf8NoBom -Path $ConfigPath -Text $updated
 
 Write-Host "Patched Codex config: $ConfigPath"
 Write-Host "  [features].hooks = true"
-Write-Host "  [features].apps  = $([bool]$EnableApps).ToString().ToLowerInvariant()"
+if ($null -eq $appsSetting) {
+    Write-Host "  [features].apps  = preserved"
+} else {
+    Write-Host "  [features].apps  = $([bool]$appsSetting).ToString().ToLowerInvariant()"
+}
 Write-Host "  Removed deprecated [features].codex_hooks if present."

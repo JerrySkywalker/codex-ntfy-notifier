@@ -1,10 +1,9 @@
 # codex-ntfy-notifier
 
-把 Codex/Codex GUI 的 Stop hook 通知通过自托管 ntfy 推送到 Android 手机：
+把 Codex/Codex GUI 的 turn-complete 通知通过自托管 ntfy 推送到 Android 手机：
 
 ```text
-Codex hook -> %USERPROFILE%\.codex\notify-ntfy.cmd
-           -> %USERPROFILE%\.codex\notify-ntfy.ps1
+Codex notify -> %USERPROFILE%\.codex\notify-ntfy.ps1
            -> https://ntfy.example.com/<topic>
            -> Android ntfy App
 ```
@@ -59,10 +58,10 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\test-codex-ntfy.ps1
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\backup-current-codex-config.ps1
 ```
 
-备份目录：
+默认备份目录：
 
 ```text
-.\backups\codex-backup-<timestamp>
+%USERPROFILE%\.codex\backups\codex-backup-<timestamp>
 ```
 
 ## 仓库原则
@@ -87,7 +86,7 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\backup-current-codex-conf
 1. 修改 `templates/notify-ntfy.ps1` 或 `templates/notify-ntfy.cmd`。
 2. 提交 Git。
 3. 运行 `scripts/install-codex-ntfy.ps1` 重新安装到 `%USERPROFILE%\.codex`。
-4. 运行 `scripts/test-codex-ntfy.ps1` 测试。
-
+4. 按 `templates/codex-config-snippet.toml` 将 `notify` 配置手动合并到用户级 `%USERPROFILE%\.codex\config.toml`。不要写入项目级 `.codex/config.toml`。
+5. 运行 `scripts/test-codex-ntfy.ps1` 测试。
 
 
