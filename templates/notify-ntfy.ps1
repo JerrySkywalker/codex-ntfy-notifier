@@ -1,10 +1,18 @@
 param(
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$NotifyArgs,
-    [string]$CodexDir
+    [string]$CodexDir,
+    [string]$RuntimeRoot,
+    [string]$WorkerPath
 )
 
+# This script is intentionally the synchronous, local-only Stop hook ingress.
+# Do not add transcript, DPAPI, DNS, TLS, HTTP, or retry work here.
 $ErrorActionPreference = "Stop"
+
+$MaxTextLength = 8192
+$MaxPathLength = 2048
+$MaxActiveItems = 100
 
 try {
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
@@ -17,62 +25,70 @@ try {
 if ([string]::IsNullOrWhiteSpace($CodexDir)) {
     $CodexDir = Join-Path $env:USERPROFILE ".codex"
 }
-$LogPath = Join-Path $CodexDir "notify-ntfy.log"
-$DpapiPath = Join-Path $CodexDir "ntfy-pass.dpapi"
+if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+    $RuntimeRoot = [Environment]::GetEnvironmentVariable("CODEX_NTFY_RUNTIME_ROOT")
+}
+if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+    $RuntimeRoot = Join-Path $env:LOCALAPPDATA "CodexNtfyNotifier"
+}
+if ([string]::IsNullOrWhiteSpace($WorkerPath)) {
+    $WorkerPath = Join-Path $PSScriptRoot "notify-ntfy-worker.ps1"
+}
 
-function Write-NotifyLog {
-    param([string]$Text)
+$PendingDir = Join-Path $RuntimeRoot "spool\pending"
+$ProcessingDir = Join-Path $RuntimeRoot "spool\processing"
+$LogPath = Join-Path $RuntimeRoot "ingress.log"
+
+function Write-IngressLog {
+    param([string]$EventName)
 
     try {
-        New-Item -ItemType Directory -Force $CodexDir | Out-Null
-        $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss.fff"
-        Add-Content -Path $LogPath -Value "[$ts] $Text" -Encoding UTF8
+        New-Item -ItemType Directory -Force $RuntimeRoot | Out-Null
+        $timestamp = [DateTime]::UtcNow.ToString("o")
+        Add-Content -LiteralPath $LogPath -Value "[$timestamp] $EventName" -Encoding UTF8
     } catch {
     }
 }
 
-function Read-ConfigText {
+function Get-PropertyValue {
     param(
-        [string]$Name,
-        [string]$EnvName
+        $Object,
+        [string[]]$Names
     )
 
-    $envValue = [Environment]::GetEnvironmentVariable($EnvName)
-    if (-not [string]::IsNullOrWhiteSpace($envValue)) {
-        return $envValue.Trim()
+    if ($null -eq $Object) {
+        return ""
     }
 
-    $path = Join-Path $CodexDir $Name
-    if (Test-Path $path) {
-        return ((Get-Content $path -Raw -Encoding UTF8).Trim())
+    foreach ($name in $Names) {
+        $property = $Object.PSObject.Properties[$name]
+        if ($null -ne $property -and $null -ne $property.Value) {
+            $value = [string]$property.Value
+            if (-not [string]::IsNullOrWhiteSpace($value)) {
+                return $value.Trim()
+            }
+        }
     }
 
     return ""
 }
 
-function Get-Password {
-    $envPass = [Environment]::GetEnvironmentVariable("NTFY_CODEX_PASS")
-    if (-not [string]::IsNullOrWhiteSpace($envPass)) {
-        return $envPass
-    }
+function Limit-Text {
+    param(
+        [string]$Text,
+        [int]$Maximum
+    )
 
-    if (-not (Test-Path $DpapiPath)) {
+    if ([string]::IsNullOrWhiteSpace($Text)) {
         return ""
     }
 
-    try {
-        $secure = Get-Content $DpapiPath -Raw | ConvertTo-SecureString
-        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-
-        try {
-            return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)
-        } finally {
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
-        }
-    } catch {
-        Write-NotifyLog "DPAPI password read failed: $($_.Exception.Message)"
-        return ""
+    $trimmed = $Text.Trim()
+    if ($trimmed.Length -le $Maximum) {
+        return $trimmed
     }
+
+    return $trimmed.Substring(0, $Maximum) + "`n… [truncated by local notifier]"
 }
 
 function Get-RawPayload {
@@ -85,350 +101,125 @@ function Get-RawPayload {
             return [Console]::In.ReadToEnd()
         }
     } catch {
-        Write-NotifyLog "Read stdin failed: $($_.Exception.Message)"
+        Write-IngressLog "stdin_read_failed"
     }
 
     return ""
 }
 
-function Normalize-DisplayPath {
-    param([string]$PathText)
+function Test-StopLikeEvent {
+    param([string]$EventName)
 
-    if ([string]::IsNullOrWhiteSpace($PathText)) {
-        return ""
-    }
-
-    $p = $PathText.Trim()
-    $p = $p -replace '^\\\\\?\\UNC\\', '\\'
-    $p = $p -replace '^\\\\\?\\', ''
-
-    return $p
+    return $EventName -match '^(?i:Stop|agent-turn-complete|manual-test|stdin-test|arg-test|notification)$'
 }
 
-function Get-Prop {
-    param(
-        $Obj,
-        [string]$Name
-    )
-
-    if ($null -eq $Obj) {
-        return $null
-    }
-
-    $p = $Obj.PSObject.Properties[$Name]
-    if ($null -ne $p) {
-        return $p.Value
-    }
-
-    return $null
-}
-
-function Convert-ContentToText {
-    param($Value)
-
-    if ($null -eq $Value) {
-        return ""
-    }
-
-    if ($Value -is [string]) {
-        return $Value
-    }
-
-    if ($Value -is [System.Collections.IEnumerable] -and -not ($Value -is [string])) {
-        $items = New-Object System.Collections.Generic.List[string]
-
-        foreach ($v in $Value) {
-            $t = Convert-ContentToText $v
-            if (-not [string]::IsNullOrWhiteSpace($t)) {
-                [void]$items.Add($t)
-            }
-        }
-
-        return ($items -join "`n")
-    }
-
-    foreach ($name in @("text", "message", "content", "value", "output_text")) {
-        $pv = Get-Prop $Value $name
-        if ($null -ne $pv) {
-            $t = Convert-ContentToText $pv
-            if (-not [string]::IsNullOrWhiteSpace($t)) {
-                return $t
-            }
-        }
-    }
-
-    return ""
-}
-
-function Extract-AssistantTextFromObject {
-    param($Obj)
-
-    if ($null -eq $Obj) {
-        return ""
-    }
-
-    foreach ($name in @("last_assistant_message", "last-assistant-message", "lastAssistantMessage")) {
-        $v = Get-Prop $Obj $name
-        if (-not [string]::IsNullOrWhiteSpace($v)) {
-            return [string]$v
-        }
-    }
-
-    $role = [string](Get-Prop $Obj "role")
-    $type = [string](Get-Prop $Obj "type")
-
-    $isAssistant = $false
-    if ($role -eq "assistant") {
-        $isAssistant = $true
-    }
-    if ($type -match "assistant|agent_message|message_output|output_text") {
-        $isAssistant = $true
-    }
-
-    if ($isAssistant) {
-        foreach ($name in @("content", "message", "text", "item")) {
-            $pv = Get-Prop $Obj $name
-            if ($null -ne $pv) {
-                $t = Convert-ContentToText $pv
-                if (-not [string]::IsNullOrWhiteSpace($t)) {
-                    return $t
-                }
-            }
-        }
-    }
-
-    foreach ($name in @("payload", "item", "response")) {
-        $pv = Get-Prop $Obj $name
-        if ($null -ne $pv) {
-            $t = Extract-AssistantTextFromObject $pv
-            if (-not [string]::IsNullOrWhiteSpace($t)) {
-                return $t
-            }
-        }
-    }
-
-    return ""
-}
-
-function Get-LastAssistantTextFromTranscript {
-    param([string]$TranscriptPath)
-
-    if ([string]::IsNullOrWhiteSpace($TranscriptPath)) {
-        return ""
-    }
-
-    $paths = @()
-    $paths += $TranscriptPath
-
-    $normalized = Normalize-DisplayPath $TranscriptPath
-    if (-not [string]::IsNullOrWhiteSpace($normalized)) {
-        $paths += $normalized
-    }
-
-    foreach ($p in $paths) {
-        try {
-            if (-not (Test-Path -LiteralPath $p)) {
-                continue
-            }
-
-            $lines = Get-Content -LiteralPath $p -Tail 500 -Encoding UTF8
-
-            for ($i = $lines.Count - 1; $i -ge 0; $i--) {
-                $line = [string]$lines[$i]
-                if ([string]::IsNullOrWhiteSpace($line)) {
-                    continue
-                }
-
-                try {
-                    $obj = $line | ConvertFrom-Json -ErrorAction Stop
-                    $text = Extract-AssistantTextFromObject $obj
-                    if (-not [string]::IsNullOrWhiteSpace($text)) {
-                        return $text
-                    }
-                } catch {
-                }
-            }
-        } catch {
-            Write-NotifyLog "Transcript read failed: $p :: $($_.Exception.Message)"
-        }
-    }
-
-    return ""
-}
-
-function Send-Ntfy {
-    param(
-        [string]$Title,
-        [string]$Message,
-        [string]$Priority = "4",
-        [string]$Tags = "robot"
-    )
-
-    $server = Read-ConfigText -Name "ntfy-url.txt" -EnvName "NTFY_CODEX_URL"
-    $topic = Read-ConfigText -Name "ntfy-topic.txt" -EnvName "NTFY_CODEX_TOPIC"
-    $user = Read-ConfigText -Name "ntfy-user.txt" -EnvName "NTFY_CODEX_USER"
-    $password = Get-Password
-
-    if ([string]::IsNullOrWhiteSpace($server)) {
-        throw "ntfy server URL is empty."
-    }
-
-    if ([string]::IsNullOrWhiteSpace($topic)) {
-        throw "ntfy topic is empty."
-    }
-
-    if ([string]::IsNullOrWhiteSpace($user)) {
-        throw "ntfy username is empty."
-    }
-
-    if ([string]::IsNullOrWhiteSpace($password)) {
-        throw "ntfy password is empty."
-    }
-
+function Test-SpoolCapacity {
     try {
-        $serverUri = [Uri]$server.TrimEnd("/")
+        $pendingCount = @(Get-ChildItem -LiteralPath $PendingDir -Filter "*.json" -File -ErrorAction SilentlyContinue).Count
+        $processingCount = @(Get-ChildItem -LiteralPath $ProcessingDir -Filter "*.json" -File -ErrorAction SilentlyContinue).Count
+        return ($pendingCount + $processingCount) -lt $MaxActiveItems
     } catch {
-        throw "ntfy server URL is invalid."
+        return $false
+    }
+}
+
+function Start-DetachedWorker {
+    param(
+        [string]$EnvelopePath
+    )
+
+    if (-not (Test-Path -LiteralPath $WorkerPath -PathType Leaf)) {
+        throw "worker_missing"
     }
 
-    $allowInsecureLoopback = $serverUri.Scheme -eq [Uri]::UriSchemeHttp -and $serverUri.IsLoopback -and $env:NTFY_CODEX_ALLOW_INSECURE_LOOPBACK -eq "1"
-    if ($serverUri.Scheme -ne [Uri]::UriSchemeHttps -and -not $allowInsecureLoopback) {
-        throw "ntfy server URL must use HTTPS."
+    # Only local paths are passed to the detached process. The raw hook payload,
+    # envelope content, and credentials are never command-line arguments.
+    $escapedWorker = $WorkerPath.Replace('"', '""')
+    $escapedEnvelope = $EnvelopePath.Replace('"', '""')
+    $escapedRuntime = $RuntimeRoot.Replace('"', '""')
+    $escapedCodex = $CodexDir.Replace('"', '""')
+    $arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$escapedWorker`" -EnvelopePath `"$escapedEnvelope`" -RuntimeRoot `"$escapedRuntime`" -CodexDir `"$escapedCodex`""
+
+    $process = Start-Process -FilePath "powershell.exe" -ArgumentList $arguments -WindowStyle Hidden -PassThru
+    if ($null -eq $process) {
+        throw "worker_start_failed"
     }
-
-    $uri = "$($serverUri.AbsoluteUri.TrimEnd('/'))/$topic"
-
-    $basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${user}:${password}"))
-
-    $headers = @{
-        Authorization = "Basic $basic"
-        Title = $Title
-        Priority = $Priority
-        Tags = $Tags
-        Markdown = "yes"
-    }
-
-    Invoke-RestMethod `
-        -Method Post `
-        -Uri $uri `
-        -Headers $headers `
-        -Body $Message `
-        -TimeoutSec 15 `
-        -ContentType "text/markdown; charset=utf-8" | Out-Null
 }
 
 try {
-    Write-NotifyLog "==== notify script invoked ===="
+    New-Item -ItemType Directory -Force $PendingDir, $ProcessingDir | Out-Null
+
+    if (-not (Test-SpoolCapacity)) {
+        throw "spool_capacity_reached"
+    }
 
     $raw = Get-RawPayload
-    Write-NotifyLog "RawLength=$($raw.Length)"
-
-    $json = $null
-
+    if ($raw.Length -gt 0 -and [int][char]$raw[0] -eq 0xFEFF) {
+        $raw = $raw.Substring(1)
+    }
+    Write-IngressLog ("raw_input_length_" + $raw.Length)
+    $payload = $null
     if (-not [string]::IsNullOrWhiteSpace($raw)) {
         try {
-            $json = $raw | ConvertFrom-Json -ErrorAction Stop
-            Write-NotifyLog "JSON parse success"
+            $payload = $raw | ConvertFrom-Json -ErrorAction Stop
         } catch {
-            Write-NotifyLog "JSON parse failed: $($_.Exception.Message)"
+            Write-IngressLog "json_parse_failed"
         }
     }
 
-    $event = ""
-    $cwd = ""
-    $model = ""
-    $transcript = ""
-    $hookLast = ""
-
-    if ($null -ne $json) {
-        foreach ($name in @("hook_event_name", "type")) {
-            $v = Get-Prop $json $name
-            if (-not [string]::IsNullOrWhiteSpace($v)) {
-                $event = [string]$v
-                break
-            }
-        }
-
-        $cwd = [string](Get-Prop $json "cwd")
-        $model = [string](Get-Prop $json "model")
-        $transcript = [string](Get-Prop $json "transcript_path")
-
-        foreach ($name in @("last_assistant_message", "last-assistant-message", "message", "text")) {
-            $v = Get-Prop $json $name
-            if (-not [string]::IsNullOrWhiteSpace($v)) {
-                $hookLast = [string]$v
-                break
-            }
-        }
+    $eventName = Get-PropertyValue -Object $payload -Names @("hook_event_name", "type", "event")
+    # Retains the useful installed-runtime compatibility behavior for manual
+    # invocations which did not provide an event name.
+    if ([string]::IsNullOrWhiteSpace($eventName)) {
+        $eventName = "notification"
     }
 
-    Write-NotifyLog "Event=$event"
-    Write-NotifyLog "Cwd=$cwd"
-    Write-NotifyLog "Model=$model"
-    Write-NotifyLog "Transcript=$transcript"
-
-    $isStopLike = $event -in @("Stop", "agent-turn-complete", "manual-test", "stdin-test", "arg-test", "notification")
-
-    if (-not $isStopLike) {
-        Write-NotifyLog "Ignored event: $event"
+    if (-not (Test-StopLikeEvent $eventName)) {
+        Write-IngressLog "event_ignored"
         exit 0
     }
 
-    $assistantText = Get-LastAssistantTextFromTranscript $transcript
-
-    if ([string]::IsNullOrWhiteSpace($assistantText)) {
-        $assistantText = $hookLast
+    $fallback = Get-PropertyValue -Object $payload -Names @("last_assistant_message", "last-assistant-message", "lastAssistantMessage", "message", "text")
+    if ([string]::IsNullOrWhiteSpace($fallback)) {
+        $fallback = "Codex Stop event queued."
     }
 
-    if ([string]::IsNullOrWhiteSpace($assistantText)) {
-        if (-not [string]::IsNullOrWhiteSpace($raw)) {
-            $assistantText = $raw
-        } else {
-            $assistantText = "Codex notify script was invoked."
-        }
+    $id = [guid]::NewGuid().ToString("N")
+    $envelope = [ordered]@{
+        schema_version = 1
+        id = $id
+        created_at = [DateTime]::UtcNow.ToString("o")
+        source = "codex"
+        event = (Limit-Text -Text $eventName -Maximum 128)
+        session_id = (Limit-Text -Text (Get-PropertyValue -Object $payload -Names @("session_id", "sessionId")) -Maximum 256)
+        turn_id = (Limit-Text -Text (Get-PropertyValue -Object $payload -Names @("turn_id", "turnId")) -Maximum 256)
+        cwd = (Limit-Text -Text (Get-PropertyValue -Object $payload -Names @("cwd")) -Maximum $MaxPathLength)
+        model = (Limit-Text -Text (Get-PropertyValue -Object $payload -Names @("model")) -Maximum 256)
+        transcript_path = (Limit-Text -Text (Get-PropertyValue -Object $payload -Names @("transcript_path", "transcriptPath")) -Maximum $MaxPathLength)
+        fallback_message = (Limit-Text -Text $fallback -Maximum $MaxTextLength)
     }
 
-    $transcriptDisplay = Normalize-DisplayPath $transcript
-    $timeText = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    $pendingPath = Join-Path $PendingDir ("$id.json")
+    $temporaryPath = Join-Path $PendingDir (".$id.$([guid]::NewGuid().ToString('N')).tmp")
+    $serialized = $envelope | ConvertTo-Json -Depth 4 -Compress
+    [System.IO.File]::WriteAllText($temporaryPath, $serialized, $utf8NoBom)
+    # A rename in the same local directory publishes only a complete envelope.
+    [System.IO.File]::Move($temporaryPath, $pendingPath)
 
-    $parts = @()
-    $parts += "## Codex task finished"
-    $parts += ""
-    $parts += "- **Time:** ``$timeText``"
-
-    if (-not [string]::IsNullOrWhiteSpace($cwd)) {
-        $parts += "- **Directory:** ``$cwd``"
+    try {
+        Start-DetachedWorker -EnvelopePath $pendingPath
+    } catch {
+        # Keep the envelope pending for a safe manual worker invocation; do not
+        # attempt network delivery from the hook as a fallback.
+        Write-IngressLog "worker_launch_failed"
+        throw
     }
 
-    if (-not [string]::IsNullOrWhiteSpace($model)) {
-        $parts += "- **Model:** ``$model``"
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($transcriptDisplay)) {
-        $parts += "- **Transcript:** ``$transcriptDisplay``"
-    }
-
-    $parts += ""
-    $parts += "---"
-    $parts += ""
-    $parts += "### Codex output"
-    $parts += ""
-
-    if (-not [string]::IsNullOrWhiteSpace($assistantText)) {
-        $parts += $assistantText.Trim()
-    } else {
-        $parts += "_No assistant output captured._"
-    }
-
-    $message = ($parts -join "`n")
-    $title = "Codex done $((Get-Date).ToString('HH:mm:ss'))"
-
-    Send-Ntfy -Title $title -Message $message -Priority "4" -Tags "robot"
-
-    Write-NotifyLog "ntfy send success. Title=$title"
+    Write-IngressLog "enqueued_and_worker_started"
     exit 0
 } catch {
-    Write-NotifyLog "Exit with error: $($_.Exception.Message)"
-    Write-Error $_.Exception.Message
+    Write-IngressLog "local_handoff_failed"
+    Write-Error "Codex ntfy local handoff failed. See the local ingress log."
+    # Never return 2: this hook must not control or block the Codex lifecycle.
     exit 1
 }

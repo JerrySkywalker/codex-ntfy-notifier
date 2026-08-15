@@ -1,17 +1,7 @@
-# Add this to your user-level %USERPROFILE%\.codex\config.toml after install.
-# Do not put it in a project .codex/config.toml: Codex ignores user-level
-# notification settings there. Replace the example path with the literal path
-# selected by the installer. TOML literal strings keep Windows backslashes intact.
+# Current Codex installation uses a Stop Hook, not the legacy `notify = [...]`
+# setting. Run scripts/install-codex-ntfy.ps1: it enables [features].hooks and
+# adds or upgrades only this product's owned Stop Hook in user-level hooks.json.
 #
-# Codex invokes this program for agent-turn-complete and passes one JSON argument.
-# The notifier wrapper also forwards manual arguments for local troubleshooting.
-notify = [
-  'powershell.exe',
-  '-NoProfile',
-  '-ExecutionPolicy',
-  'Bypass',
-  '-File',
-  'C:\Users\YOUR_USER\.codex\notify-ntfy.ps1',
-  '-CodexDir',
-  'C:\Users\YOUR_USER\.codex',
-]
+# Do not add a legacy notify declaration as well: that can create duplicate
+# phone notifications. Existing unrelated notify declarations are preserved and
+# reported by the installer for owner review.
