@@ -11,19 +11,21 @@ if (-not $BackupRoot -or $BackupRoot.Trim() -eq "") {
     $BackupRoot = Join-Path $CodexDir "backups"
 }
 
-$stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$stamp = Get-Date -Format "yyyyMMdd-HHmmssfff"
 $backupDir = Join-Path $BackupRoot "codex-backup-$stamp"
 
 New-Item -ItemType Directory -Force $backupDir | Out-Null
 
 $names = @(
     "notify-ntfy.ps1",
+    "notify-ntfy-worker.ps1",
     "notify-ntfy.cmd",
     "ntfy-url.txt",
     "ntfy-topic.txt",
     "ntfy-user.txt",
     "ntfy-pass.dpapi",
-    "config.toml"
+    "config.toml",
+    "hooks.json"
 )
 
 foreach ($name in $names) {

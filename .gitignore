@@ -31,3 +31,8 @@ notes-private/
 
 # Local settings
 *.local.*
+
+# Product-owned per-user runtime state
+CodexNtfyNotifier/
+ingress.log
+worker.log
