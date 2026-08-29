@@ -50,6 +50,29 @@ function Write-IngressLog {
     }
 }
 
+function Get-DeliveryMode {
+    # Missing mode files preserve existing installations. Invalid mode files use
+    # the no-direct-delivery path so a direct worker cannot take a JMG item.
+    $modePath = Join-Path $CodexDir "delivery-mode.txt"
+    if (-not (Test-Path -LiteralPath $modePath -PathType Leaf)) {
+        return "legacy-direct"
+    }
+
+    try {
+        $mode = (Get-Content -LiteralPath $modePath -Raw -Encoding UTF8).Trim().ToLowerInvariant()
+    } catch {
+        Write-IngressLog "delivery_mode_unreadable_safe_jmg"
+        return "jmg"
+    }
+
+    if ($mode -eq "legacy-direct" -or $mode -eq "jmg") {
+        return $mode
+    }
+
+    Write-IngressLog "delivery_mode_invalid_safe_jmg"
+    return "jmg"
+}
+
 function Get-PropertyValue {
     param(
         $Object,
@@ -148,6 +171,7 @@ function Start-DetachedWorker {
 
 try {
     New-Item -ItemType Directory -Force $PendingDir, $ProcessingDir | Out-Null
+    $deliveryMode = Get-DeliveryMode
 
     if (-not (Test-SpoolCapacity)) {
         throw "spool_capacity_reached"
@@ -206,16 +230,21 @@ try {
     # A rename in the same local directory publishes only a complete envelope.
     [System.IO.File]::Move($temporaryPath, $pendingPath)
 
-    try {
-        Start-DetachedWorker -EnvelopePath $pendingPath
-    } catch {
-        # Keep the envelope pending for a safe manual worker invocation; do not
-        # attempt network delivery from the hook as a fallback.
-        Write-IngressLog "worker_launch_failed"
-        throw
+    if ($deliveryMode -eq "legacy-direct") {
+        try {
+            Start-DetachedWorker -EnvelopePath $pendingPath
+        } catch {
+            # Keep the envelope pending for a safe manual worker invocation; do not
+            # attempt network delivery from the hook as a fallback.
+            Write-IngressLog "worker_launch_failed"
+            throw
+        }
+        Write-IngressLog "enqueued_and_worker_started"
+    } else {
+        # JMG claims the published item; JMG unavailability leaves it pending.
+        Write-IngressLog "jmg_pending"
     }
 
-    Write-IngressLog "enqueued_and_worker_started"
     exit 0
 } catch {
     Write-IngressLog "local_handoff_failed"

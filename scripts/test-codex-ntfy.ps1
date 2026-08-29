@@ -1,5 +1,6 @@
 param(
-    [switch]$KeepArtifacts
+    [switch]$KeepArtifacts,
+    [string]$TestRoot
 )
 
 # Self-contained, loopback-only validation. It never reads an owner's ntfy
@@ -9,7 +10,9 @@ $RepoRoot = Split-Path -Parent $PSScriptRoot
 $IngressPath = Join-Path $RepoRoot "templates\notify-ntfy.ps1"
 $WorkerPath = Join-Path $RepoRoot "templates\notify-ntfy-worker.ps1"
 $InstallerPath = Join-Path $PSScriptRoot "install-codex-ntfy.ps1"
-$TestRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-ntfy-notifier-test-" + [guid]::NewGuid().ToString("N"))
+if ([string]::IsNullOrWhiteSpace($TestRoot)) {
+    $TestRoot = Join-Path ([IO.Path]::GetTempPath()) ("codex-ntfy-notifier-test-" + [guid]::NewGuid().ToString("N"))
+}
 $Utf8NoBom = New-Object System.Text.UTF8Encoding $false
 
 function Assert-That {
@@ -319,6 +322,8 @@ apps = true
     Assert-That (@(Get-ChildItem -LiteralPath (Join-Path $installerCodex "backups") -Directory -ErrorAction SilentlyContinue).Count -ge 1) "Installer did not create backup"
     $installerIdempotenceResult = "PASS"
     $unrelatedHooksResult = "PASS"
+
+    & (Join-Path $PSScriptRoot "test-jmg-delivery-mode.ps1") -KeepArtifacts:$KeepArtifacts -TestRoot (Join-Path $TestRoot "jmg-delivery-mode")
 
     Write-Host "PAYLOAD_CAPTURE_TEST=$payloadCaptureResult"
     Write-Host "TARGET_INGRESS_P95_LT_MS=1000 ACTUAL_INGRESS_P95_MS=$ingressP95"

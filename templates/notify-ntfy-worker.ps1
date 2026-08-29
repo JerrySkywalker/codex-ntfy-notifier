@@ -237,6 +237,29 @@ function Get-WorkerTimeoutSec {
     return $timeout
 }
 
+function Get-DeliveryMode {
+    param([string]$CodexDir)
+
+    $modePath = Join-Path $CodexDir "delivery-mode.txt"
+    if (-not (Test-Path -LiteralPath $modePath -PathType Leaf)) {
+        return "legacy-direct"
+    }
+
+    try {
+        $mode = (Get-Content -LiteralPath $modePath -Raw -Encoding UTF8).Trim().ToLowerInvariant()
+    } catch {
+        Write-WorkerLog "delivery_mode_unreadable_safe_jmg"
+        return "jmg"
+    }
+
+    if ($mode -eq "legacy-direct" -or $mode -eq "jmg") {
+        return $mode
+    }
+
+    Write-WorkerLog "delivery_mode_invalid_safe_jmg"
+    return "jmg"
+}
+
 function Send-Ntfy {
     param(
         [string]$Title,
@@ -318,6 +341,12 @@ $claimedPath = $null
 $envelope = $null
 try {
     New-Item -ItemType Directory -Force $PendingDir, $ProcessingDir, $FailedDir, $ReceiptsDir | Out-Null
+    if ((Get-DeliveryMode -CodexDir $CodexDir) -ne "legacy-direct") {
+        # Exit before moving a JMG-mode item, leaving its claim to the adapter.
+        Write-WorkerLog "delivery_mode_jmg_direct_worker_skipped"
+        exit 0
+    }
+
     $fullEnvelopePath = [System.IO.Path]::GetFullPath($EnvelopePath)
     $fullPendingDir = [System.IO.Path]::GetFullPath($PendingDir)
     if (-not $fullEnvelopePath.StartsWith($fullPendingDir, [StringComparison]::OrdinalIgnoreCase)) {
