@@ -134,9 +134,11 @@ real password or call an external ntfy server.
 ## Future JMG seam
 
 `schema_version = 1` is an internal local notification-envelope contract, not
-a JMG API. A future `jerry-message-gateway` adapter may consume the same queued
-envelope in place of `notify-ntfy-worker.ps1`; the Codex ingress does not need
-to change. JMG is not installed, called, copied, or required by this project.
+a public provider protocol. The explicit `legacy-direct` and `jmg` delivery
+modes now select which local component may own a pending envelope. See
+[`docs/jmg-delivery-mode.md`](docs/jmg-delivery-mode.md) for the safe upgrade
+and rollback contract. JMG is not installed, called, copied, or required by
+this project.
 
 ## Repository boundaries
 

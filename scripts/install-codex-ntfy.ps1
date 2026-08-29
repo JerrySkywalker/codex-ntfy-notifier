@@ -7,7 +7,9 @@ param(
     [string]$ConfigPath,
     [string]$HooksPath,
     [string]$BackupRoot,
-    [switch]$NoBackup
+    [switch]$NoBackup,
+    [ValidateSet("legacy-direct", "jmg")]
+    [string]$DeliveryMode
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,6 +68,24 @@ function Get-RequiredSetting {
         return $ExistingValue.Trim()
     }
     return (Read-Host $Prompt).Trim()
+}
+
+function Resolve-DeliveryMode {
+    param(
+        [string]$RequestedMode,
+        [string]$ExistingMode
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($RequestedMode)) {
+        return $RequestedMode.Trim().ToLowerInvariant()
+    }
+
+    $normalizedExisting = if ($null -eq $ExistingMode) { "" } else { $ExistingMode.Trim().ToLowerInvariant() }
+    if ($normalizedExisting -eq "legacy-direct" -or $normalizedExisting -eq "jmg") {
+        return $normalizedExisting
+    }
+
+    return "legacy-direct"
 }
 
 function Test-OwnedNotifierCommand {
@@ -195,6 +215,7 @@ if (-not $NoBackup) {
 $NtfyUrl = Get-RequiredSetting -Value $NtfyUrl -ExistingValue (Get-ExistingText "ntfy-url.txt") -Prompt "ntfy server URL, e.g. https://ntfy.example.com"
 $Topic = Get-RequiredSetting -Value $Topic -ExistingValue (Get-ExistingText "ntfy-topic.txt") -Prompt "ntfy topic, e.g. codex-topic"
 $User = Get-RequiredSetting -Value $User -ExistingValue (Get-ExistingText "ntfy-user.txt") -Prompt "ntfy username"
+$DeliveryMode = Resolve-DeliveryMode -RequestedMode $DeliveryMode -ExistingMode (Get-ExistingText "delivery-mode.txt")
 
 foreach ($file in @("notify-ntfy.ps1", "notify-ntfy-worker.ps1", "notify-ntfy.cmd")) {
     Copy-Item -LiteralPath (Join-Path $TemplateDir $file) -Destination (Join-Path $CodexDir $file) -Force
@@ -202,6 +223,7 @@ foreach ($file in @("notify-ntfy.ps1", "notify-ntfy-worker.ps1", "notify-ntfy.cm
 Write-Utf8NoBom -Path (Join-Path $CodexDir "ntfy-url.txt") -Text ($NtfyUrl.TrimEnd("/") + "`n")
 Write-Utf8NoBom -Path (Join-Path $CodexDir "ntfy-topic.txt") -Text ($Topic + "`n")
 Write-Utf8NoBom -Path (Join-Path $CodexDir "ntfy-user.txt") -Text ($User + "`n")
+Write-Utf8NoBom -Path (Join-Path $CodexDir "delivery-mode.txt") -Text ($DeliveryMode + "`n")
 
 $dpapiPath = Join-Path $CodexDir "ntfy-pass.dpapi"
 if ($null -ne $Password) {
