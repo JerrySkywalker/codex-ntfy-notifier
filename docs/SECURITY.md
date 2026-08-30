@@ -8,6 +8,10 @@
 - The local v1 envelope contains only bounded routing/display fields. It never
   persists the complete Hook payload or tool input/output. Its fallback text
   and transcript path are still private local user data.
+- JMG must never read a complete Codex transcript. A future JMG producer
+  adapter may submit structured metadata and a bounded producer summary only.
+- Producer-supplied recipients and provider targets are inputs, not routing
+  authority. JMG owns the canonical routing and delivery decisions.
 - Runtime spool files, worker receipts, ingress logs, and worker logs belong
   under `%LOCALAPPDATA%\CodexNtfyNotifier`, never under this repository. Logs
   and receipts use generic/sanitized status codes rather than raw payloads,

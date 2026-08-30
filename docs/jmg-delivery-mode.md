@@ -1,12 +1,19 @@
 # JMG delivery mode
 
+> **Authority and status:** this document describes the currently implemented
+> delivery-ownership seam in this repository. It does not implement the JMG
+> producer adapter. JMG's pinned v1 documentation is the authority for message,
+> routing, and delivery contracts; see the
+> [adapter boundary](JMG_ADAPTER_BOUNDARY.md).
+
 The notifier keeps its existing envelope-v1 spool and Stop Hook ingress. Its
 delivery owner is selected by one explicit file in the selected Codex runtime:
 `delivery-mode.txt`.
 
 - `legacy-direct` is the default when the file is absent. The local ingress
   atomically publishes the envelope and starts the existing detached direct
-  worker. This is the rollback path.
+  worker. This is the temporary rollback path, not a parallel target
+  architecture.
 - `jmg` atomically publishes the same envelope but never starts the direct
   worker. The pending item remains for a JMG-owned adapter to claim.
 
@@ -59,3 +66,9 @@ No JMG endpoint, routing logic, provider client, scheduler, or real network
 call is implemented by this repository. The isolated mode test uses synthetic
 input only and proves that `jmg` leaves one pending envelope, that the direct
 worker cannot claim it, and that `legacy-direct` remains selectable.
+
+Selecting `jmg` and selecting `legacy-direct` are mutually exclusive states.
+A later P0-003 implementation must consume JMG's canonical producer contract;
+it must not make producer-supplied recipients or provider targets
+authoritative. No real Hook or delivery-mode migration is authorized by this
+documentation.
