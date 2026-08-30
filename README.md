@@ -3,6 +3,12 @@
 Send Codex completion notifications to an Android ntfy app without putting the
 network on Codex's Stop-hook critical path.
 
+> **Product direction:** this repository is the first producer/capture-adapter
+> candidate for JMG v1. The current direct ntfy path remains a temporary
+> rollback path; it is not a parallel target architecture. Start with the
+> [JMG adapter boundary](docs/JMG_ADAPTER_BOUNDARY.md) and the
+> [documentation index](docs/README.md) before changing this integration.
+
 ```text
 Codex Stop Hook
   -> synchronous local enqueue
@@ -131,21 +137,25 @@ Markdown/transcript delivery, network-failure isolation, HTTPS enforcement,
 DPAPI/config behavior, and installer idempotence. It does not read the owner's
 real password or call an external ntfy server.
 
-## Future JMG seam
+## JMG seam
 
 `schema_version = 1` is an internal local notification-envelope contract, not
 a public provider protocol. The explicit `legacy-direct` and `jmg` delivery
 modes now select which local component may own a pending envelope. See
 [`docs/jmg-delivery-mode.md`](docs/jmg-delivery-mode.md) for the safe upgrade
-and rollback contract. A fresh JMG-only installer selection requires an
-explicit canonical shared ingress root and does not require ntfy credentials;
-legacy-direct preserves its existing `%LOCALAPPDATA%` behavior and credential
-requirements. JMG is not installed, called, copied, or required by this
-project.
+and rollback contract. Those modes are mutually exclusive. A fresh JMG-only
+installer selection requires an explicit canonical shared ingress root and
+does not require ntfy credentials; `legacy-direct` preserves its existing
+`%LOCALAPPDATA%` behavior and credential requirements.
+
+The mode seam is implemented, but the P0-003 producer adapter is future work.
+JMG is not installed, called, copied, or required by this project. This
+documentation change does not authorize changing a real Hook or delivery mode.
 
 ## Repository boundaries
 
 This repository contains templates, installer scripts, tests, and docs. It
 must never contain DPAPI material, ntfy passwords, private topics, raw Hook
 payloads, transcript contents, or runtime spool/receipt files. See
-[docs/SECURITY.md](docs/SECURITY.md) for the security boundary.
+[docs/SECURITY.md](docs/SECURITY.md) for the security boundary and
+[docs/README.md](docs/README.md) for the canonical documentation map.
