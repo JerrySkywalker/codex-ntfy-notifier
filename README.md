@@ -52,7 +52,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-codex-
 ```
 
 Before mutation, the installer backs up `config.toml`, `hooks.json`, current
-notifier scripts, and local notifier configuration under
+notifier scripts, delivery-mode/shared-root selection, and local notifier configuration under
 `%USERPROFILE%\.codex\backups`. It enables Codex Hooks and updates only a
 provably repository-owned `notify-ntfy` Stop hook. All unrelated hooks,
 including TabBeacon and `wt-agent-hooks`, remain in place.
@@ -137,8 +137,11 @@ real password or call an external ntfy server.
 a public provider protocol. The explicit `legacy-direct` and `jmg` delivery
 modes now select which local component may own a pending envelope. See
 [`docs/jmg-delivery-mode.md`](docs/jmg-delivery-mode.md) for the safe upgrade
-and rollback contract. JMG is not installed, called, copied, or required by
-this project.
+and rollback contract. A fresh JMG-only installer selection requires an
+explicit canonical shared ingress root and does not require ntfy credentials;
+legacy-direct preserves its existing `%LOCALAPPDATA%` behavior and credential
+requirements. JMG is not installed, called, copied, or required by this
+project.
 
 ## Repository boundaries
 
