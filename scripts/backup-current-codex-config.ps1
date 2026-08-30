@@ -24,6 +24,8 @@ $names = @(
     "ntfy-topic.txt",
     "ntfy-user.txt",
     "ntfy-pass.dpapi",
+    "delivery-mode.txt",
+    "jmg-runtime-root.txt",
     "config.toml",
     "hooks.json"
 )

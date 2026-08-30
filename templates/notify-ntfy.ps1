@@ -242,7 +242,8 @@ try {
         Write-IngressLog "enqueued_and_worker_started"
     } else {
         # JMG claims the published item; JMG unavailability leaves it pending.
-        Write-IngressLog "jmg_pending"
+        # Do not create a user-session log in JMG mode: the writer is limited
+        # to the shared pending directory by the JMG-owned ACL contract.
     }
 
     exit 0
